@@ -1,0 +1,232 @@
+Midi Gestures Framework
+Hybrid architecture design for Windows 11 (MediaPipe Hands → gesture engine → mapping →
+MIDI/OSC outputs)
+Design snapshot date: March 05, 2026
+Purpose. Provide a reusable, real-time gesture-control framework where an OSC-style structured message
+bus is the internal data spine, while outputs can be MIDI, OSC, or both. Internal values remain
+high-resolution floats (not MIDI-limited).
+System goals and constraints
+• Platform: Windows 11.
+• Language: Python (implementation-ready pseudocode; modular package design).
+• Tracking: MediaPipe Hands with multi-hand support, landmarks, and handedness.
+• Internal representation: high-resolution floats (0.0–1.0 and/or real values).
+• Modular pipeline: input → tracking → feature extraction → smoothing → gesture state machines →
+mapping layers → output adapters → logging/telemetry.
+• Supports continuous controls, discrete triggers, SHIFT modifier, modes/pages, and two-hand logic.
+• Real-time requirements: minimize latency and jitter; avoid blocking I/O in the inference path.
+High-level architecture
+Thread A: Vision Producer (capture-only)
+  - cap.read() blocks here, not in the instrument loop
+  - pushes newest frame into a LIFO queue (size=1) so stale frames are dropped
+Thread B: Inference & Logic (compute-only)
+  - pops latest frame
+  - MediaPipe inference + tracking snapshot
+  - plugins compute features and gestures
+  - publishes structured messages to AsyncBus (fire-and-forget)
+AsyncBus (queue-based, prioritized)
+  - publish(msg) never runs subscriber code
+  - dispatcher thread fans out messages to subscriber queues
+  - high-priority events (taps, mode switch, panic) are delivered ahead of continuous streams
+Thread C: Output Consumer (I/O-only)
+  - subscribes to bus messages
+  - mapping engine converts bus paths into OutputMessages
+  - output scheduler uses high-resolution timing for note-offs
+  - adapters are isolated with circuit-breakers and reconnect loops
+Telemetry (optional consumer)
+  - CSV record/replay, debug overlays, performance stats
+Internal message spine (OSC-style paths)
+All derived signals and events are represented as structured messages with OSC-like paths, for
+example: /hand/right/xy, /hand/left/pinch, /shift, /mode/index,
+/event/hand/right/tap_index.
+Core data models
+FrameData
+  - frame_id, t_s (monotonic), dt_s, image_bgr, image_w, image_h
+HandData
+  - hand_id (stable-ish), handedness ("Left"/"Right"), confidence
+  - landmarks: dict[name] -> Landmark(x,y,z)
+  - derived: palm_center_xy, present flag
+FeatureSignals (optional container)
+  - values: dict[str] -> float (high-resolution)
+  - meta: debug fields
+GestureEvent
+  - name, path, t_s, hand (optional), payload
+MappingContext
+  - mode index, shift state, hand presence, extras
+OutputMessage (adapter-neutral)
+  - kind: "midi_cc" | "midi_note_on" | "midi_note_off" | "osc"
+  - data: dict (channel/cc/value, note/vel, osc address/args)
+Real-time pipeline details
+1) Vision producer: frame capture with LIFO queue
+A dedicated capture thread performs only camera I/O and pushes frames to a LIFO queue of size 1.
+This guarantees the inference thread always processes the newest frame and drops stale frames
+during camera hiccups.
+class FrameLifoQueue:
+    def __init__(self, maxsize=1):
+        self.lock = threading.Lock()
+        self.item = None
+    def push_latest(self, frame):
+        with self.lock:
+            self.item = frame  # overwrite (drop stale)
+    def pop_latest(self):
+        with self.lock:
+            f = self.item
+            self.item = None
+            return f
+2) AsyncBus: queue-based, prioritized, fire-and-forget
+The bus must never synchronously invoke subscribers. Publishing is O(1) and non-blocking with drop
+policies. A dispatcher thread fans out messages to subscriber queues. Events use a high-priority lane
+so taps do not wait behind CC floods.
+@dataclass
+class BusMessage:
+    path: str
+    t_s: float
+    args: list
+    msg_type: str            # tracking|signal|event|system
+    priority: str = "med"    # hi|med|lo
+    meta: dict = field(default_factory=dict)
+class AsyncBus:
+    def publish(self, msg):
+        # put_nowait into q_hi/q_med/q_lo; drop policy if full
+        pass
+    def subscribe(self, filter_fn=None, out_max=4096) -> queue.Queue:
+        # returns a subscriber queue
+        pass
+    def start_dispatcher(self, stop_event):
+        # pulls from internal priority queues and fans out to subscribers
+        pass
+3) IoC / Plugins: keep the core small and extensible
+Feature and gesture logic is implemented as plugins that consume the tracking snapshot and publish
+signals/events to the bus. This avoids a monolithic main class and allows Options 1–5 to be added
+incrementally without entanglement.
+class Plugin(ABC):
+    def on_register(self, bus: AsyncBus, cfg: dict): ...
+    def on_frame(self, tracking: dict, t_s: float, dt_s: float): ...
+class PinchPlugin(Plugin):
+    # computes pinch strength, smooths, applies hysteresis, publishes:
+    #   /hand/<side>/pinch  (signal, low priority)
+    #   /event/hand/<side>/pinch_on|pinch_off (event, high priority)
+    pass
+Feature extraction (default set)
+Signal
+Pinch strength
+Palm XY
+Roll
+Depth proxy
+Speed
+How it’s computed
+Inverse distance between THUMB_TIP and INDEX_TIP; normalized to 0..1; smoothed by EMA; hysteresis gate for on/off.
+Palm center computed from wrist + MCP joints; calibrated center/range per session; optional relative mode to avoid jumps; dead zone around 0.5.
+Angle of INDEX_MCP → PINKY_MCP line; mapped to 0..1.
+Wrist z (MediaPipe relative depth) normalized via calibration/range.
+Magnitude of palm XY velocity; normalized with a practical cap; smoothed.
+Feel-good rules (defaults)
+• EMA smoothing for continuous signals with per-signal alpha (xy/pinch/roll/depth/speed).
+• Dead zones for XY (centered) and pinch (unipolar) to reduce micro-jitter.
+• Hysteresis thresholds for pinch and fist/shift to prevent flicker.
+• Debounce + cooldown for discrete triggers (tap) to prevent double-fire.
+• Optional relative (delta) control mode for XY to avoid jumps when re-engaging.
+• Calibration per session: neutral pose center and practical range; optional range learning over time.
+• Rate limiting on outputs (per CC/address buckets) to avoid MIDI/OSC flooding.
+• Telemetry hooks: bus recording, replay testing, overlay diagnostics, perf stats.
+Output layer
+Mapping engine
+Mappings translate bus paths into OutputMessages using mode/page tables and shift layers.
+Continuous signals are treated as latest-wins and rate-limited; discrete events are priority-delivered.
+Output scheduler
+Note-offs must not be tied to camera FPS. A dedicated high-resolution scheduler thread uses a
+min-heap of deadlines to fire note-offs accurately even during inference jitter.
+Adapters with circuit breakers
+MIDI and OSC adapters must catch and contain their own failures. If sending fails, the adapter marks
+itself disconnected and attempts reconnection periodically without blocking the bus or inference thread.
+Recommended default Ableton mapping
+These defaults are MIDI-learn friendly, contiguous, and consistent across modes. Use Channel 1 for
+CC and Channel 10 for drum notes.
+Group
+Right (instrument)
+Right (instrument)
+Right (instrument)
+Right (instrument)
+Right (instrument)
+Left (mixer/sends)
+Left (mixer/sends)
+Global
+Global
+Shift layer
+Control
+XY X / XY Y
+Pinch
+Roll
+Speed
+Depth
+XY X / XY Y
+Pinch
+Mode index
+CC/Note
+CC16 / CC17
+Channel Notes
+1
+CC18
+CC19
+CC20
+CC21
+1
+1
+Macros 1–2
+Macro 3 / filter
+Macro 4
+1
+1
+CC22 / CC23
+CC24
+CC25
+Shift state
+Alt XY (right)
+Drums (events)
+Kick / Snare / Hat
+CC26
+CC48 / CC49
+Note 36/38/42
+1
+1
+1
+1
+1
+10
+Macro 5
+Macro 6
+Sends A–B
+Track vol or Send C
+0..127 across pages
+0 or 127
+Fine/alt macros
+Tap-mapped
+Global (event)
+Stop/Panic
+Note 41
+Safety and graceful degradation
+10
+Open-hand stop mapping
+• Camera dropouts: publish /system/camera_ok 0; hold last values briefly, then ramp to neutral;
+suppress triggers during reacquire.
+• Hand lost: publish /hand/<side>/present 0; decay outputs over 200–400ms; release gates
+after timeout to avoid stuck shift/pinch.
+• Jitter spikes: clamp per-frame steps (slew limiter) before EMA; ignore low-confidence frames; keep
+filters stable.
+• CPU overload: detect frame budget misses and degrade: lower resolution/FPS, skip inference
+frames, increase output rate-limits; never stall output scheduler.
+• Output failures: adapters implement circuit breakers and background reconnect; send failures never
+crash vision or inference.
+• Panic: map an open-hand stop or hotkey to All Notes Off + optional CC reset; also emit OSC panic if
+enabled.
+Incremental implementation checklist
+ Scaffold concurrency: VisionProducer + InferenceLogic + OutputConsumer + BusDispatcher
+threads.
+ Bring up MIDI output safely (loopMIDI). Verify CC and note send without vision.
+ Add MediaPipe tracking in inference thread; publish minimal tracking summaries.
+ Implement Option 1 as plugins: PinchPlugin + ShiftPlugin; map to CC18 + CC26.
+ Add high-res scheduler for note-offs; verify timing independent of camera FPS.
+ Implement Option 2: XY plugin with calibration, EMA, dead zone, optional relative mode.
+ Implement Option 3: Tap plugin(s) with debounce/cooldown; map to drum notes ch10.
+ Implement Option 4: ModeManager + mode switch event; separate mapping tables per mode.
+ Add telemetry: bus recorder + replay source; diagnostics overlay; performance stats.
+ Harden safety: ramp-to-neutral on hand loss, panic command, CPU overload fallback.

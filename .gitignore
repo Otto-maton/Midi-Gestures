@@ -1,0 +1,29 @@
+﻿# Python cache
+__pycache__/
+*.py[cod]
+*.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build/package outputs
+build/
+dist/
+
+# Logs
+*.log
+
+# Local environment / secrets
+.env
+*.key
+*.pem
+
+# Windows files
+Thumbs.db
+Desktop.ini
+
+# IDE/editor files
+.vscode/
+.idea/
