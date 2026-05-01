@@ -1,4 +1,4 @@
-# Midi Gestures 3 — Setup Guide
+# Midi Gestures — Setup Guide
 
 ## Requirements
 
@@ -24,12 +24,12 @@
 
 If you received a zip file, extract it to a folder of your choice, for example:
 ```
-C:\Users\YourName\Documents\Midi Gestures 3
+C:\Users\YourName\Documents\Midi Gestures
 ```
 
 If you are cloning from git:
 ```bash
-git clone <repo-url> "Midi Gestures 3"
+git clone <repo-url> "Midi Gestures"
 ```
 
 ---
@@ -39,7 +39,7 @@ git clone <repo-url> "Midi Gestures 3"
 Open a terminal (Command Prompt or PowerShell) inside the project folder:
 
 ```powershell
-cd "C:\Users\YourName\Documents\Midi Gestures 3"
+cd "C:\Users\YourName\Documents\Midi Gestures"
 python -m venv venv
 ```
 
