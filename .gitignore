@@ -27,3 +27,6 @@ Desktop.ini
 # IDE/editor files
 .vscode/
 .idea/
+
+# XR bridge self-signed certificate
+certs/

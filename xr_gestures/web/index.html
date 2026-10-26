@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Midi Gestures XR</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card: rgba(14, 19, 29, 0.92);
+      --line: rgba(255, 255, 255, 0.09);
+      --text: #e6edf3;
+      --dim: #8b97a6;
+      --right: #35d0ff;
+      --left: #ff7ab8;
+      --ok: #3ddc84;
+      --bad: #ff4d5e;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+    #stage { position: fixed; inset: 0; }
+    #stage canvas { display: block; }
+    #overlay { position: fixed; top: 24px; left: 24px; width: min(440px, calc(100vw - 32px));
+      max-height: calc(100vh - 48px); overflow: auto; padding: 24px 26px; border-radius: 18px;
+      background: var(--card); border: 1px solid var(--line); backdrop-filter: blur(8px); }
+    body.in-xr #overlay { display: none; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: 0.01em; }
+    h1 span { color: var(--right); }
+    .sub { margin: 4px 0 18px; color: var(--dim); }
+    .status { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .pill { font-size: 13px; padding: 4px 10px 4px 22px; border-radius: 999px; position: relative;
+      background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); color: var(--dim); }
+    .pill::before { content: ""; position: absolute; left: 9px; top: 50%; width: 7px; height: 7px;
+      margin-top: -3.5px; border-radius: 50%; background: var(--dim); }
+    .pill[data-state="ok"] { color: var(--text); }
+    .pill[data-state="ok"]::before { background: var(--ok); }
+    .pill[data-state="bad"]::before { background: var(--bad); }
+    button#enter { width: 100%; padding: 14px 18px; border: 0; border-radius: 12px; cursor: pointer;
+      font: 600 17px/1 inherit; color: #06121a; background: linear-gradient(90deg, var(--right), #7ce3ff); }
+    button#enter:disabled { cursor: default; color: var(--dim); background: rgba(255, 255, 255, 0.06); }
+    .note { color: var(--dim); font-size: 14px; margin: 10px 0 0; }
+    details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+    summary { cursor: pointer; font-weight: 600; }
+    ul { padding-left: 18px; margin: 10px 0 0; color: var(--dim); font-size: 14px; }
+    li { margin: 4px 0; }
+    li b { color: var(--text); font-weight: 600; }
+    kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px;
+      border: 1px solid var(--line); background: rgba(255, 255, 255, 0.05); color: var(--text); }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+        "iwer": "https://cdn.jsdelivr.net/npm/iwer@2.5.0/build/iwer.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <main id="overlay">
+    <h1>Midi Gestures <span>XR</span></h1>
+    <p class="sub">Your hands as a MIDI controller, on Meta Quest 3.</p>
+    <div class="status">
+      <span id="bridge" class="pill">PC bridge: connecting...</span>
+      <span id="midi" class="pill">MIDI: --</span>
+    </div>
+    <button id="enter" disabled>Checking WebXR...</button>
+    <p id="xr-note" class="note"></p>
+    <details open>
+      <summary>How to play</summary>
+      <ul>
+        <li>Two boxes float in front of you: <b>pink for the left hand, blue for the right</b>. A hand only plays while its palm is inside its box.</li>
+        <li><b>Move</b> inside the box for XY, <b>push forward</b> for depth, <b>tilt</b> the knuckles for roll, <b>pinch</b> thumb and index for the pinch CC.</li>
+        <li><b>Flick</b> right index, middle or ring finger toward your palm for drum taps.</li>
+        <li><b>Left fist</b> = shift: the right box switches to its second pair of CCs.</li>
+        <li>Hand shapes (thumb up/down, open palm, fist, victory, pointing up, I love you) fire gate notes.</li>
+        <li>The button strip on your left: <b>Panic</b>, <b>Mode</b>, <b>Recenter</b> (moves the boxes to where you look), <b>Mute</b>, <b>HUD</b>. Poke with a fingertip.</li>
+        <li>On a keyboard: <kbd>P</kbd> panic, <kbd>M</kbd> mode, <kbd>R</kbd> recenter, <kbd>Space</kbd> mute, <kbd>H</kbd> HUD.</li>
+      </ul>
+    </details>
+    <p id="urls" class="note"></p>
+  </main>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
