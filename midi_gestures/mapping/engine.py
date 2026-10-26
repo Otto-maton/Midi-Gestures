@@ -2,7 +2,7 @@ from __future__ import annotations
 import copy
 import time
 import logging
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from midi_gestures.bus import BusMessage
 from midi_gestures.models import MappingContext, OutputMessage
 
@@ -22,7 +22,8 @@ class MappingEngine:
         self._context = MappingContext()
         self._rate_buckets: Dict[str, float] = {}
         self._rate_limit_s = cfg.get("output_rate_limit_s", 0.008)
-        self._pitched_gate_notes: Dict[int, int] = {}
+        # (rule_idx, out_idx) -> (channel, note) currently sounding
+        self._pitched_gate_notes: Dict[Tuple[int, int], Tuple[int, int]] = {}
         saved = cfg.get("rule_enabled", {})
         self._rule_enabled: Dict[int, bool] = {int(k): bool(v) for k, v in saved.items()}
         self._solo_path: str | None = None
@@ -109,28 +110,20 @@ class MappingEngine:
 
     def process(self, msg: BusMessage) -> List[OutputMessage]:
         self.update_context(msg)
+        outputs = self._release_inactive_pitched()
         candidate_indices = self._rules_by_path.get(msg.path, [])
         if not candidate_indices:
-            return []
+            return outputs
         if self._solo_path is not None and msg.path != self._solo_path:
-            return []
-        outputs = []
+            return outputs
         for rule_idx in candidate_indices:
-            if not self._rule_enabled.get(rule_idx, True):
+            if not self._rule_active(rule_idx):
                 continue
             rule = self._tables[rule_idx]
-            shift_req = rule.get("shift")
-            if shift_req is not None and shift_req != self._context.shift_state:
-                continue
-            mode_req = rule.get("mode")
-            if mode_req is not None and mode_req != self._context.mode_index:
-                continue
             arg_index = rule.get("arg_index", 0)
             for i, tmpl in enumerate(rule["output"]):
                 if tmpl.get("kind") == "midi_note_gate_pitched":
-                    om = self._build_pitched_gate(tmpl, msg, rule_idx)
-                    if om:
-                        outputs.append(om)
+                    outputs.extend(self._build_pitched_gate(tmpl, msg, (rule_idx, i)))
                     continue
                 idx = arg_index[i] if isinstance(arg_index, list) else arg_index
                 om = self._build_output(tmpl, msg, idx)
@@ -140,19 +133,54 @@ class MappingEngine:
                         outputs.append(om)
         return outputs
 
-    def _build_pitched_gate(self, tmpl: dict, msg: BusMessage, rule_idx: int) -> OutputMessage | None:
+    def _rule_active(self, rule_idx: int) -> bool:
+        if not self._rule_enabled.get(rule_idx, True):
+            return False
+        rule = self._tables[rule_idx]
+        if self._solo_path is not None and rule["path"] != self._solo_path:
+            return False
+        shift_req = rule.get("shift")
+        if shift_req is not None and shift_req != self._context.shift_state:
+            return False
+        mode_req = rule.get("mode")
+        if mode_req is not None and mode_req != self._context.mode_index:
+            return False
+        return True
+
+    def _build_pitched_gate(self, tmpl: dict, msg: BusMessage, key: Tuple[int, int]) -> List[OutputMessage]:
+        # Sources may stream [note, gate] every frame, so only edges produce
+        # MIDI: a pitch change while held releases the old note first.
         if len(msg.args) < 2:
-            return None
+            return []
         note = max(0, min(127, int(round(float(msg.args[0])))))
-        gate = float(msg.args[1])
         ch = tmpl["channel"]
-        vel = tmpl.get("velocity", 100)
-        if gate >= 0.5:
-            self._pitched_gate_notes[rule_idx] = note
-            return OutputMessage(kind="midi_note_gate_on", data={"channel": ch, "note": note, "velocity": vel})
-        else:
-            off_note = self._pitched_gate_notes.get(rule_idx, note)
-            return OutputMessage(kind="midi_note_gate_off", data={"channel": ch, "note": off_note, "velocity": 0})
+        if float(msg.args[1]) < 0.5:
+            return self._release_pitched(key)
+        if self._pitched_gate_notes.get(key) == (ch, note):
+            return []
+        outputs = self._release_pitched(key)
+        self._pitched_gate_notes[key] = (ch, note)
+        outputs.append(OutputMessage(kind="midi_note_gate_on", data={
+            "channel": ch,
+            "note": note,
+            "velocity": tmpl.get("velocity", 100),
+        }))
+        return outputs
+
+    def _release_pitched(self, key: Tuple[int, int]) -> List[OutputMessage]:
+        held = self._pitched_gate_notes.pop(key, None)
+        if held is None:
+            return []
+        ch, note = held
+        return [OutputMessage(kind="midi_note_gate_off", data={"channel": ch, "note": note, "velocity": 0})]
+
+    def _release_inactive_pitched(self) -> List[OutputMessage]:
+        # A held note whose rule stops applying (shift/mode change, rule
+        # disabled, other path soloed) would never receive its gate-off.
+        outputs = []
+        for key in [k for k in self._pitched_gate_notes if not self._rule_active(k[0])]:
+            outputs.extend(self._release_pitched(key))
+        return outputs
 
     def _matches_rule(self, rule: dict, msg: BusMessage) -> bool:
         if rule["path"] != msg.path:
