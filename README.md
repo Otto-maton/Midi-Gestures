@@ -52,12 +52,17 @@ If `pip install` fails on `python-rtmidi`, you most likely need the Microsoft C+
 
 ---
 
-## Two run modes
+## Run modes
 
 | Command | What it does |
 |---|---|
 | `python run.py` | Main app. Hand tracking → MIDI / OSC output. |
 | `python run_mouse.py` | Alternate mode. Hand gestures drive the OS mouse cursor. |
+| `python run_xr.py` | XR mode. Meta Quest 3 hand tracking → MIDI / OSC, with mixed-reality feedback in the headset. |
+
+### XR mode (Meta Quest 3)
+
+`run_xr.py` serves a WebXR app to the Quest 3's browser over your Wi-Fi. The headset's own hand tracking replaces the webcam: you play inside two floating control zones and see every CC and note live in passthrough, while the PC side reuses the same mapping engine, `config.json` and MIDI/OSC output. It needs only `pip install -r requirements-xr.txt` (no MediaPipe or OpenCV). Setup, controls and tuning are in [XR.md](XR.md).
 
 ---
 
@@ -117,8 +122,10 @@ python run.py --config custom.json          # use a different config file
 .
 ├── run.py                      # Main entry point (MIDI / OSC)
 ├── run_mouse.py                # Alternate entry: mouse-control mode
+├── run_xr.py                   # Alternate entry: Meta Quest 3 XR mode
 ├── config.json                 # All user-tunable settings
 ├── requirements.txt
+├── requirements-xr.txt         # Dependencies for XR mode only
 ├── midi_gestures.spec          # PyInstaller build spec
 ├── gesture_recognizer.task     # MediaPipe gesture model
 ├── hand_landmarker.task        # MediaPipe hand-landmark model
@@ -137,7 +144,12 @@ python run.py --config custom.json          # use a different config file
 │   ├── ui/                     # Live settings panel
 │   └── telemetry/              # Bus recorder, overlay, perf stats
 │
-└── mouse_gestures/             # Alternate mouse-control mode
+├── mouse_gestures/             # Alternate mouse-control mode
+│
+├── xr_gestures/                # XR mode: PC bridge (server, certs, settings)
+│   └── web/                    # WebXR app for the Quest (gesture engine, HUD, zones)
+│
+└── tests/                      # XR gesture engine (Node) and bridge (unittest) tests
 ```
 
 ---
@@ -150,6 +162,7 @@ The pipeline is multi-threaded: a `VisionProducer` captures camera frames into a
 
 ## Documentation
 
-- [SETUP.md](SETUP.md) — full installation walkthrough and troubleshooting
-- [GESTURES.md](GESTURES.md) — every gesture, threshold, and CC / note mapping
-- [Midi_Gestures_Hybrid_Architecture_Design_v2.txt](Midi_Gestures_Hybrid_Architecture_Design_v2.txt) — internal architecture design notes
+- [SETUP.md](SETUP.md): full installation walkthrough and troubleshooting
+- [GESTURES.md](GESTURES.md): every gesture, threshold, and CC / note mapping
+- [XR.md](XR.md): Meta Quest 3 XR mode setup, controls and tuning
+- [Midi_Gestures_Hybrid_Architecture_Design_v2.txt](Midi_Gestures_Hybrid_Architecture_Design_v2.txt): internal architecture design notes
